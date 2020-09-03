@@ -110,7 +110,7 @@ class OAuth2Session(OAuth2Client, Session):
                 raise MissingTokenError()
             auth = self.token_auth
         return super(OAuth2Session, self).request(
-            method, url, auth=auth, **kwargs)
+            method, url, auth=auth, verify=False, **kwargs)
 
     @staticmethod
     def handle_error(error_type, error_description):
