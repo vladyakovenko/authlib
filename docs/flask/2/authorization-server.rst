@@ -172,11 +172,19 @@ Now define an endpoint for authorization. This endpoint is used by
         # It can be done with a redirection to the login page, or a login
         # form on this authorization page.
         if request.method == 'GET':
-            grant = server.validate_consent_request(end_user=current_user)
+            grant = server.get_consent_grant(end_user=current_user)
+            client = grant.client
+            scope = client.get_allowed_scope(grant.request.scope)
+
+            # You may add a function to extract scope into a list of scopes
+            # with rich information, e.g.
+            scopes = describe_scope(scope)  # returns [{'key': 'email', 'icon': '...'}]
             return render_template(
                 'authorize.html',
                 grant=grant,
                 user=current_user,
+                client=client,
+                scopes=scopes,
             )
         confirmed = request.form['confirm']
         if confirmed:

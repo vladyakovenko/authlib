@@ -1,7 +1,7 @@
 from sqlalchemy import Column, String, Text, Integer
 from authlib.common.encoding import json_loads, json_dumps
 from authlib.oauth2.rfc6749 import ClientMixin
-from authlib.oauth2.rfc6749.util import scope_to_list, list_to_scope
+from authlib.oauth2.rfc6749 import scope_to_list, list_to_scope
 
 
 class OAuth2ClientMixin(ClientMixin):
@@ -124,8 +124,11 @@ class OAuth2ClientMixin(ClientMixin):
     def check_client_secret(self, client_secret):
         return self.client_secret == client_secret
 
-    def check_token_endpoint_auth_method(self, method):
-        return self.token_endpoint_auth_method == method
+    def check_endpoint_auth_method(self, method, endpoint):
+        if endpoint == 'token':
+            return self.token_endpoint_auth_method == method
+        # TODO
+        return True
 
     def check_response_type(self, response_type):
         return response_type in self.response_types

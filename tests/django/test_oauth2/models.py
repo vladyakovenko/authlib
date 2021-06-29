@@ -55,8 +55,10 @@ class Client(Model, ClientMixin):
     def check_client_secret(self, client_secret):
         return self.client_secret == client_secret
 
-    def check_token_endpoint_auth_method(self, method):
-        return self.token_endpoint_auth_method == method
+    def check_endpoint_auth_method(self, method, endpoint):
+        if endpoint == 'token':
+            return self.token_endpoint_auth_method == method
+        return True
 
     def check_response_type(self, response_type):
         allowed = self.response_type.split()
@@ -74,12 +76,14 @@ class OAuth2Token(Model, TokenMixin):
     access_token = CharField(max_length=255, unique=True, null=False)
     refresh_token = CharField(max_length=255, db_index=True)
     scope = TextField(default='')
-    revoked = BooleanField(default=False)
+
     issued_at = IntegerField(null=False, default=now_timestamp)
     expires_in = IntegerField(null=False, default=0)
+    access_token_revoked_at = IntegerField(default=0)
+    refresh_token_revoked_at = IntegerField(default=0)
 
-    def get_client_id(self):
-        return self.client_id
+    def check_client(self, client):
+        return self.client_id == client.client_id
 
     def get_scope(self):
         return self.scope
@@ -87,15 +91,18 @@ class OAuth2Token(Model, TokenMixin):
     def get_expires_in(self):
         return self.expires_in
 
-    def get_expires_at(self):
-        return self.issued_at + self.expires_in
+    def is_revoked(self):
+        return self.access_token_revoked_at or self.refresh_token_revoked_at
 
-    def is_refresh_token_active(self):
-        if self.revoked:
+    def is_expired(self):
+        if not self.expires_in:
             return False
 
-        expired_at = self.issued_at + self.expires_in * 2
-        return expired_at >= time.time()
+        expires_at = self.issued_at + self.expires_in
+        return expires_at < time.time()
+
+    def is_refresh_token_active(self):
+        return not self.refresh_token_revoked_at
 
 
 class OAuth2Code(Model, AuthorizationCodeMixin):

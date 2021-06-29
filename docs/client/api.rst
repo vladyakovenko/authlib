@@ -28,6 +28,7 @@ Requests OAuth Sessions
         fetch_token,
         refresh_token,
         revoke_token,
+        introspect_token,
         register_compliance_hook
 
 .. autoclass:: OAuth2Auth
@@ -43,6 +44,12 @@ HTTPX OAuth Clients
 .. autoclass:: OAuth1Auth
     :members:
 
+.. autoclass:: OAuth1Client
+    :members:
+        create_authorization_url,
+        fetch_request_token,
+        fetch_access_token,
+        parse_authorization_response
 
 .. autoclass:: AsyncOAuth1Client
     :members:
@@ -53,6 +60,16 @@ HTTPX OAuth Clients
 
 .. autoclass:: OAuth2Auth
 
+.. autoclass:: OAuth2Client
+    :members:
+        register_client_auth_method,
+        create_authorization_url,
+        fetch_token,
+        refresh_token,
+        revoke_token,
+        introspect_token,
+        register_compliance_hook
+
 .. autoclass:: AsyncOAuth2Client
     :members:
         register_client_auth_method,
@@ -60,6 +77,7 @@ HTTPX OAuth Clients
         fetch_token,
         refresh_token,
         revoke_token,
+        introspect_token,
         register_compliance_hook
 
 .. autoclass:: AsyncAssertionClient
@@ -76,16 +94,6 @@ Flask Registry and RemoteApp
         register,
         create_client
 
-.. autoclass:: FlaskRemoteApp
-    :members:
-        authorize_redirect,
-        authorize_access_token,
-        save_authorize_data,
-        get,
-        post,
-        patch,
-        put,
-        delete
 
 Django Registry and RemoteApp
 -----------------------------
@@ -97,16 +105,6 @@ Django Registry and RemoteApp
         register,
         create_client
 
-.. autoclass:: DjangoRemoteApp
-    :members:
-        authorize_redirect,
-        authorize_access_token,
-        save_authorize_data,
-        get,
-        post,
-        patch,
-        put,
-        delete
 
 Starlette Registry and RemoteApp
 --------------------------------
@@ -117,14 +115,3 @@ Starlette Registry and RemoteApp
     :members:
         register,
         create_client
-
-.. autoclass:: StarletteRemoteApp
-    :members:
-        authorize_redirect,
-        authorize_access_token,
-        save_authorize_data,
-        get,
-        post,
-        patch,
-        put,
-        delete

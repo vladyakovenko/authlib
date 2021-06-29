@@ -1,7 +1,5 @@
-from __future__ import unicode_literals, print_function
-import mock
 import requests
-from unittest import TestCase
+from unittest import TestCase, mock
 from io import StringIO
 
 from authlib.oauth1 import (
@@ -11,7 +9,7 @@ from authlib.oauth1 import (
     SIGNATURE_TYPE_QUERY,
 )
 from authlib.oauth1.rfc5849.util import escape
-from authlib.common.encoding import to_unicode, unicode_type
+from authlib.common.encoding import to_unicode
 from authlib.integrations.requests_client import OAuth1Session, OAuthError
 from tests.client_base import mock_text_response
 from tests.util import read_file_path
@@ -103,13 +101,13 @@ class OAuth1SessionTest(TestCase):
         generate_timestamp.return_value = '123'
         fake_xml = StringIO('hello world')
         headers = {'Content-Type': 'application/xml'}
-        signature = (
-            'OAuth oauth_nonce="abc", oauth_timestamp="123", oauth_version="1.0", '
-            'oauth_signature_method="HMAC-SHA1", oauth_consumer_key="foo", '
-            'oauth_signature="h2sRqLArjhlc5p3FTkuNogVHlKE%3D"'
-        )
-        auth = OAuth1Session('foo')
-        auth.send = self.verify_signature(signature)
+
+        def fake_send(r, **kwargs):
+            auth_header = r.headers['Authorization']
+            self.assertIn('oauth_body_hash', auth_header)
+
+        auth = OAuth1Session('foo', force_include_body=True)
+        auth.send = fake_send
         auth.post('https://i.b', headers=headers, files=[('fake', fake_xml)])
 
     @mock.patch('authlib.oauth1.rfc5849.client_auth.generate_timestamp')
@@ -169,8 +167,8 @@ class OAuth1SessionTest(TestCase):
         self.assertEqual(resp['oauth_token'], 'foo')
         self.assertEqual(resp['oauth_verifier'], 'bar')
         for k, v in resp.items():
-            self.assertTrue(isinstance(k, unicode_type))
-            self.assertTrue(isinstance(v, unicode_type))
+            self.assertTrue(isinstance(k, str))
+            self.assertTrue(isinstance(v, str))
 
     def test_fetch_request_token(self):
         auth = OAuth1Session('foo')
@@ -178,8 +176,8 @@ class OAuth1SessionTest(TestCase):
         resp = auth.fetch_request_token('https://example.com/token')
         self.assertEqual(resp['oauth_token'], 'foo')
         for k, v in resp.items():
-            self.assertTrue(isinstance(k, unicode_type))
-            self.assertTrue(isinstance(v, unicode_type))
+            self.assertTrue(isinstance(k, str))
+            self.assertTrue(isinstance(v, str))
 
         resp = auth.fetch_request_token('https://example.com/token', realm='A')
         self.assertEqual(resp['oauth_token'], 'foo')
@@ -193,8 +191,8 @@ class OAuth1SessionTest(TestCase):
                                         verify=False, stream=True)
         self.assertEqual(resp['oauth_token'], 'foo')
         for k, v in resp.items():
-            self.assertTrue(isinstance(k, unicode_type))
-            self.assertTrue(isinstance(v, unicode_type))
+            self.assertTrue(isinstance(k, str))
+            self.assertTrue(isinstance(v, str))
 
     def test_fetch_access_token(self):
         auth = OAuth1Session('foo', verifier='bar')
@@ -202,8 +200,8 @@ class OAuth1SessionTest(TestCase):
         resp = auth.fetch_access_token('https://example.com/token')
         self.assertEqual(resp['oauth_token'], 'foo')
         for k, v in resp.items():
-            self.assertTrue(isinstance(k, unicode_type))
-            self.assertTrue(isinstance(v, unicode_type))
+            self.assertTrue(isinstance(k, str))
+            self.assertTrue(isinstance(v, str))
 
         auth = OAuth1Session('foo', verifier='bar')
         auth.send = mock_text_response('{"oauth_token":"foo"}')
@@ -223,8 +221,8 @@ class OAuth1SessionTest(TestCase):
                                        verify=False, stream=True)
         self.assertEqual(resp['oauth_token'], 'foo')
         for k, v in resp.items():
-            self.assertTrue(isinstance(k, unicode_type))
-            self.assertTrue(isinstance(v, unicode_type))
+            self.assertTrue(isinstance(k, str))
+            self.assertTrue(isinstance(v, str))
 
     def _test_fetch_access_token_raises_error(self, session):
         """Assert that an error is being raised whenever there's no verifier

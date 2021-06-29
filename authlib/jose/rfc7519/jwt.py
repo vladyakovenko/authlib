@@ -1,15 +1,16 @@
 import re
+import random
 import datetime
 import calendar
 from authlib.common.encoding import (
-    text_types, to_bytes, to_unicode,
+    to_bytes, to_unicode,
     json_loads, json_dumps,
 )
 from .claims import JWTClaims
 from ..errors import DecodeError, InsecureClaimError
 from ..rfc7515 import JsonWebSignature
 from ..rfc7516 import JsonWebEncryption
-from ..rfc7517 import KeySet
+from ..rfc7517 import KeySet, Key
 
 
 class JsonWebToken(object):
@@ -37,7 +38,7 @@ class JsonWebToken(object):
 
             # check claims values
             v = payload[k]
-            if isinstance(v, text_types) and self.SENSITIVE_VALUES.search(v):
+            if isinstance(v, str) and self.SENSITIVE_VALUES.search(v):
                 raise InsecureClaimError(k)
 
     def encode(self, header, payload, key, check=True):
@@ -60,9 +61,7 @@ class JsonWebToken(object):
         if check:
             self.check_sensitive_data(payload)
 
-        if isinstance(key, KeySet):
-            key = key.find_by_kid(header.get('kid'))
-
+        key = find_encode_key(key, header)
         text = to_bytes(json_dumps(payload))
         if 'enc' in header:
             return self._jwe.serialize_compact(header, text, key)
@@ -86,11 +85,10 @@ class JsonWebToken(object):
         if claims_cls is None:
             claims_cls = JWTClaims
 
-        if isinstance(key, KeySet):
-            def load_key(header, payload):
-                return key.find_by_kid(header.get('kid'))
-        else:
+        if callable(key):
             load_key = key
+        else:
+            load_key = create_load_key(prepare_raw_key(key))
 
         s = to_bytes(s)
         dot_count = s.count(b'.')
@@ -115,3 +113,64 @@ def decode_payload(bytes_payload):
     if not isinstance(payload, dict):
         raise DecodeError('Invalid payload type')
     return payload
+
+
+def prepare_raw_key(raw):
+    if isinstance(raw, KeySet):
+        return raw
+
+    if isinstance(raw, str) and \
+            raw.startswith('{') and raw.endswith('}'):
+        raw = json_loads(raw)
+    elif isinstance(raw, (tuple, list)):
+        raw = {'keys': raw}
+    return raw
+
+
+def find_encode_key(key, header):
+    if isinstance(key, KeySet):
+        kid = header.get('kid')
+        if kid:
+            return key.find_by_kid(kid)
+
+        rv = random.choice(key.keys)
+        # use side effect to add kid value into header
+        header['kid'] = rv.kid
+        return rv
+
+    if isinstance(key, dict) and 'keys' in key:
+        keys = key['keys']
+        kid = header.get('kid')
+        for k in keys:
+            if k.get('kid') == kid:
+                return k
+
+        if not kid:
+            rv = random.choice(keys)
+            header['kid'] = rv['kid']
+            return rv
+        raise ValueError('Invalid JSON Web Key Set')
+
+    # append kid into header
+    if isinstance(key, dict) and 'kid' in key:
+        header['kid'] = key['kid']
+    elif isinstance(key, Key) and key.kid:
+        header['kid'] = key.kid
+    return key
+
+
+def create_load_key(key):
+    def load_key(header, payload):
+        if isinstance(key, KeySet):
+            return key.find_by_kid(header.get('kid'))
+
+        if isinstance(key, dict) and 'keys' in key:
+            keys = key['keys']
+            kid = header.get('kid')
+            for k in keys:
+                if k.get('kid') == kid:
+                    return k
+            raise ValueError('Invalid JSON Web Key Set')
+        return key
+
+    return load_key

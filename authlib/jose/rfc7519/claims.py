@@ -58,10 +58,10 @@ class BaseClaims(dict):
 
     def _validate_claim_value(self, claim_name):
         option = self.options.get(claim_name)
-        value = self.get(claim_name)
-        if not option or not value:
+        if not option:
             return
 
+        value = self.get(claim_name)
         option_value = option.get('value')
         if option_value and value != option_value:
             raise InvalidClaimError(claim_name)
@@ -99,6 +99,11 @@ class JWTClaims(BaseClaims):
         self.validate_nbf(now, leeway)
         self.validate_iat(now, leeway)
         self.validate_jti()
+
+        # Validate custom claims
+        for key in self.options.keys():
+            if key not in self.REGISTERED_CLAIMS:
+                self._validate_claim_value(key)
 
     def validate_iss(self):
         """The "iss" (issuer) claim identifies the principal that issued the
@@ -165,7 +170,7 @@ class JWTClaims(BaseClaims):
         """
         if 'exp' in self:
             exp = self['exp']
-            if not isinstance(exp, int):
+            if not _validate_numeric_time(exp):
                 raise InvalidClaimError('exp')
             if exp < (now - leeway):
                 raise ExpiredTokenError()
@@ -181,7 +186,7 @@ class JWTClaims(BaseClaims):
         """
         if 'nbf' in self:
             nbf = self['nbf']
-            if not isinstance(nbf, int):
+            if not _validate_numeric_time(nbf):
                 raise InvalidClaimError('nbf')
             if nbf > (now + leeway):
                 raise InvalidTokenError()
@@ -194,7 +199,7 @@ class JWTClaims(BaseClaims):
         """
         if 'iat' in self:
             iat = self['iat']
-            if not isinstance(iat, int):
+            if not _validate_numeric_time(iat):
                 raise InvalidClaimError('iat')
 
     def validate_jti(self):
@@ -208,3 +213,7 @@ class JWTClaims(BaseClaims):
         sensitive string.  Use of this claim is OPTIONAL.
         """
         self._validate_claim_value('jti')
+
+
+def _validate_numeric_time(s):
+    return isinstance(s, (int, float))

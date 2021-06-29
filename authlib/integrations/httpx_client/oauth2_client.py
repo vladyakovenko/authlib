@@ -1,5 +1,6 @@
+import asyncio
 import typing
-from httpx import AsyncClient, Auth, Request, Response
+from httpx import AsyncClient, Auth, Client, Request, Response, USE_CLIENT_DEFAULT
 from authlib.common.urls import url_decode
 from authlib.oauth2.client import OAuth2Client as _OAuth2Client
 from authlib.oauth2.auth import ClientAuth, TokenAuth
@@ -13,7 +14,7 @@ from ..base_client import (
 
 __all__ = [
     'OAuth2Auth', 'OAuth2ClientAuth',
-    'AsyncOAuth2Client',
+    'AsyncOAuth2Client', 'OAuth2Client',
 ]
 
 
@@ -25,7 +26,8 @@ class OAuth2Auth(Auth, TokenAuth):
         try:
             url, headers, body = self.prepare(
                 str(request.url), request.headers, request.content)
-            yield Request(method=request.method, url=url, headers=headers, data=body)
+            headers['Content-Length'] = str(len(body))
+            yield Request(method=request.method, url=url, headers=headers, content=body)
         except KeyError as error:
             description = 'Unsupported token_type: {}'.format(str(error))
             raise UnsupportedTokenTypeError(description=description)
@@ -37,7 +39,8 @@ class OAuth2ClientAuth(Auth, ClientAuth):
     def auth_flow(self, request: Request) -> typing.Generator[Request, Response, None]:
         url, headers, body = self.prepare(
             request.method, str(request.url), request.headers, request.content)
-        yield Request(method=request.method, url=url, headers=headers, data=body)
+        headers['Content-Length'] = str(len(body))
+        yield Request(method=request.method, url=url, headers=headers, content=body)
 
 
 class AsyncOAuth2Client(_OAuth2Client, AsyncClient):
@@ -57,6 +60,11 @@ class AsyncOAuth2Client(_OAuth2Client, AsyncClient):
         client_kwargs = self._extract_session_request_params(kwargs)
         AsyncClient.__init__(self, **client_kwargs)
 
+        # We use a "reverse" Event to synchronize coroutines to prevent
+        # multiple concurrent attempts to refresh the same token
+        self._token_refresh_event = asyncio.Event()
+        self._token_refresh_event.set()
+
         _OAuth2Client.__init__(
             self, session=None,
             client_id=client_id, client_secret=client_secret,
@@ -71,33 +79,53 @@ class AsyncOAuth2Client(_OAuth2Client, AsyncClient):
     def handle_error(error_type, error_description):
         raise OAuthError(error_type, error_description)
 
-    async def request(self, method, url, withhold_token=False, auth=None, **kwargs):
-        if not withhold_token and auth is None:
+    async def request(self, method, url, withhold_token=False, auth=USE_CLIENT_DEFAULT, **kwargs):
+        if not withhold_token and auth is USE_CLIENT_DEFAULT:
             if not self.token:
                 raise MissingTokenError()
 
             if self.token.is_expired():
-                await self.ensure_active_token()
+                await self.ensure_active_token(self.token)
 
             auth = self.token_auth
 
         return await super(AsyncOAuth2Client, self).request(
             method, url, auth=auth, **kwargs)
 
-    async def ensure_active_token(self):
-        refresh_token = self.token.get('refresh_token')
-        url = self.metadata.get('token_endpoint')
-        if refresh_token and url:
-            await self.refresh_token(url, refresh_token=refresh_token)
-        elif self.metadata.get('grant_type') == 'client_credentials':
-            access_token = self.token['access_token']
-            token = await self.fetch_token(url, grant_type='client_credentials')
-            if self.update_token:
-                await self.update_token(token, access_token=access_token)
-        else:
-            raise InvalidTokenError()
+    async def stream(self, method, url, withhold_token=False, auth=USE_CLIENT_DEFAULT, **kwargs):
+        if not withhold_token and auth is USE_CLIENT_DEFAULT:
+            if not self.token:
+                raise MissingTokenError()
 
-    async def _fetch_token(self, url, body='', headers=None, auth=None,
+            if self.token.is_expired():
+                await self.ensure_active_token(self.token)
+
+            auth = self.token_auth
+
+        return super(AsyncOAuth2Client, self).stream(
+            method, url, auth=auth, **kwargs)
+
+    async def ensure_active_token(self, token):
+        if self._token_refresh_event.is_set():
+            # Unset the event so other coroutines don't try to update the token
+            self._token_refresh_event.clear()
+            refresh_token = token.get('refresh_token')
+            url = self.metadata.get('token_endpoint')
+            if refresh_token and url:
+                await self.refresh_token(url, refresh_token=refresh_token)
+            elif self.metadata.get('grant_type') == 'client_credentials':
+                access_token = token['access_token']
+                new_token = await self.fetch_token(url, grant_type='client_credentials')
+                if self.update_token:
+                    await self.update_token(new_token, access_token=access_token)
+            else:
+                raise InvalidTokenError()
+            # Notify coroutines that token is refreshed
+            self._token_refresh_event.set()
+            return
+        await self._token_refresh_event.wait()  # wait until the token is ready
+
+    async def _fetch_token(self, url, body='', headers=None, auth=USE_CLIENT_DEFAULT,
                            method='POST', **kwargs):
         if method.upper() == 'POST':
             resp = await self.post(
@@ -113,10 +141,11 @@ class AsyncOAuth2Client(_OAuth2Client, AsyncClient):
         for hook in self.compliance_hook['access_token_response']:
             resp = hook(resp)
 
+        resp.raise_for_status()
         return self.parse_response_token(resp.json())
 
     async def _refresh_token(self, url, refresh_token=None, body='',
-                             headers=None, auth=None, **kwargs):
+                             headers=None, auth=USE_CLIENT_DEFAULT, **kwargs):
         resp = await self.post(
             url, data=dict(url_decode(body)), headers=headers,
             auth=auth, **kwargs)
@@ -124,6 +153,7 @@ class AsyncOAuth2Client(_OAuth2Client, AsyncClient):
         for hook in self.compliance_hook['refresh_token_response']:
             resp = hook(resp)
 
+        resp.raise_for_status()
         token = self.parse_response_token(resp.json())
         if 'refresh_token' not in token:
             self.token['refresh_token'] = refresh_token
@@ -133,7 +163,65 @@ class AsyncOAuth2Client(_OAuth2Client, AsyncClient):
 
         return self.token
 
-    def _http_post(self, url, body=None, auth=None, headers=None, **kwargs):
+    def _http_post(self, url, body=None, auth=USE_CLIENT_DEFAULT, headers=None, **kwargs):
         return self.post(
             url, data=dict(url_decode(body)),
             headers=headers, auth=auth, **kwargs)
+
+
+class OAuth2Client(_OAuth2Client, Client):
+    SESSION_REQUEST_PARAMS = HTTPX_CLIENT_KWARGS
+
+    client_auth_class = OAuth2ClientAuth
+    token_auth_class = OAuth2Auth
+
+    def __init__(self, client_id=None, client_secret=None,
+                 token_endpoint_auth_method=None,
+                 revocation_endpoint_auth_method=None,
+                 scope=None, redirect_uri=None,
+                 token=None, token_placement='header',
+                 update_token=None, **kwargs):
+
+        # extract httpx.Client kwargs
+        client_kwargs = self._extract_session_request_params(kwargs)
+        Client.__init__(self, **client_kwargs)
+
+        _OAuth2Client.__init__(
+            self, session=self,
+            client_id=client_id, client_secret=client_secret,
+            token_endpoint_auth_method=token_endpoint_auth_method,
+            revocation_endpoint_auth_method=revocation_endpoint_auth_method,
+            scope=scope, redirect_uri=redirect_uri,
+            token=token, token_placement=token_placement,
+            update_token=update_token, **kwargs
+        )
+
+    @staticmethod
+    def handle_error(error_type, error_description):
+        raise OAuthError(error_type, error_description)
+
+    def request(self, method, url, withhold_token=False, auth=USE_CLIENT_DEFAULT, **kwargs):
+        if not withhold_token and auth is USE_CLIENT_DEFAULT:
+            if not self.token:
+                raise MissingTokenError()
+
+            if not self.ensure_active_token(self.token):
+                raise InvalidTokenError()
+
+            auth = self.token_auth
+
+        return super(OAuth2Client, self).request(
+            method, url, auth=auth, **kwargs)
+
+    def stream(self, method, url, withhold_token=False, auth=USE_CLIENT_DEFAULT, **kwargs):
+        if not withhold_token and auth is USE_CLIENT_DEFAULT:
+            if not self.token:
+                raise MissingTokenError()
+
+            if not self.ensure_active_token(self.token):
+                raise InvalidTokenError()
+
+            auth = self.token_auth
+
+        return super(OAuth2Client, self).stream(
+            method, url, auth=auth, **kwargs)

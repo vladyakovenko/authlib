@@ -43,6 +43,7 @@ device_credentials = {
     }
 }
 
+
 class DeviceCodeGrant(_DeviceCodeGrant):
     def query_device_credential(self, device_code):
         data = device_credentials.get(device_code)
@@ -64,7 +65,7 @@ class DeviceCodeGrant(_DeviceCodeGrant):
             return User.query.get(1), False
         return None
 
-    def should_slow_down(self, credential, now):
+    def should_slow_down(self, credential):
         return False
 
 
@@ -88,6 +89,7 @@ class DeviceCodeGrantTest(TestCase):
             'redirect_uris': ['http://localhost/authorized'],
             'scope': 'profile',
             'grant_types': [grant_type],
+            'token_endpoint_auth_method': 'none',
         })
         db.session.add(client)
         db.session.commit()
@@ -97,13 +99,7 @@ class DeviceCodeGrantTest(TestCase):
         self.prepare_data()
         rv = self.client.post('/oauth/token', data={
             'grant_type': DeviceCodeGrant.GRANT_TYPE,
-        })
-        resp = json.loads(rv.data)
-        self.assertEqual(resp['error'], 'invalid_request')
-
-        rv = self.client.post('/oauth/token', data={
-            'grant_type': DeviceCodeGrant.GRANT_TYPE,
-            'device_code': 'valid-device',
+            'client_id': 'test',
         })
         resp = json.loads(rv.data)
         self.assertEqual(resp['error'], 'invalid_request')
@@ -124,7 +120,7 @@ class DeviceCodeGrantTest(TestCase):
             'client_id': 'invalid',
         })
         resp = json.loads(rv.data)
-        self.assertEqual(resp['error'], 'unauthorized_client')
+        self.assertEqual(resp['error'], 'invalid_client')
 
         self.prepare_data(grant_type='password')
         rv = self.client.post('/oauth/token', data={
@@ -217,12 +213,19 @@ class DeviceAuthorizationEndpointTest(TestCase):
         rv = self.client.post('/device_authorize', data={
             'scope': 'profile'
         })
-        self.assertEqual(rv.status_code, 400)
+        self.assertEqual(rv.status_code, 401)
         resp = json.loads(rv.data)
-        self.assertEqual(resp['error'], 'invalid_request')
+        self.assertEqual(resp['error'], 'invalid_client')
 
     def test_create_authorization_response(self):
         self.create_server()
+        client = Client(
+            user_id=1,
+            client_id='client',
+            client_secret='secret',
+        )
+        db.session.add(client)
+        db.session.commit()
         rv = self.client.post('/device_authorize', data={
             'client_id': 'client',
         })
